@@ -1,5 +1,4 @@
 #!/usr/bin/env python3
-# cat_chaser.py -- makes my Elegoo robot car play with the cats :)
 #
 # camera is on the BACK of the car looking at the cat, toy drags behind on
 # the wand. when the cat gets close the car runs away so the cat chases the
@@ -28,7 +27,7 @@ import numpy as np
 from flask import Flask, Response
 from ultralytics import YOLO
 
-# ----------------- settings, tweak me -----------------
+# ----------------- settings -----------------
 ROBOT_IP   = "192.168.4.1"   # robot's AP address
 CTRL_PORT  = 100             # elegoo tcp command port
 STREAM_URLS = [              
@@ -55,6 +54,14 @@ TEASE_SPD  = 110
 SEARCH_SPIN_SPD  = 130    # tank turns need a bit of oomph or they stall (keep it above 110)
 SEARCH_SPIN_SEC  = 0.1   # how long each little spin step lasts
 SEARCH_LOOK_SEC  = 0.9    # how long we hold still and actually look
+
+MODEL_FILE  = "yolo11s.pt"   # select your model
+CONF        = 0.25           # lower = catches more cats, more false alarms
+DETECT_SIZE = 640            # inference size. 416 was missing far-away cats
+CAT_CLASSES = [15, 16]       # 15=cat 16=dog. yes dog. coco models mix up
+                             # cats and dogs ALL the time.
+HOLD_SEC    = 1.0            # keep chasing on the last known position this
+                             # long when detection flickers out for a frame
 
 
 PLAY_TIME  = 300      # seconds of play before a forced break
@@ -183,14 +190,14 @@ def grab_frame(cap, cap_url):
 app = Flask(__name__)
 
 PAGE = """
-<html><head><title>cat bot</title>
+<html><head><title>Purrsuit</title>
 <style>
  body { background:#1e1e1e; color:#eee; font-family:monospace; text-align:center }
  img  { max-width:95%; border:2px solid #444; margin-top:10px }
  #d   { font-size:1.4em; margin:10px }
  .cal { color:#ffb347 }
 </style></head><body>
-<h2>cat bot live feed</h2>
+<h2>Live Purrsuit feed</h2>
 <div id="d">...</div>
 <img src="/video">
 <script>
@@ -233,12 +240,16 @@ def main():
                     help="motors off, just show video + distance for tuning")
     ap.add_argument("--ip", default=ROBOT_IP)
     ap.add_argument("--stream", default=None, help="force a stream url")
+    ap.add_argument("--record", action="store_true",
+                    help="save a frame every 2s to cat_dataset/ so you can "
+                         "fine-tune yolo on your cats") 
+
     args = ap.parse_args()
 
     STATE["mode"] = "calibrate" if args.calibrate else "play"
 
-    print("[yolo] loading model...")
-    model = YOLO("yolo11n.pt")     # choose model
+    print("[yolo] loading", MODEL_FILE)
+    model = YOLO(MODEL_FILE)
 
     cap, cap_url = open_camera(args.ip, args.stream)
 
@@ -247,15 +258,21 @@ def main():
                      debug=False, use_reloader=False), daemon=True).start()
     print("[web] feed page -> http://localhost:3333")
 
+    time.sleep(1.5)    # give the tcp link a sec to come up
+    wiggle_toy(90)     # center ultrasonic sensor once so the crash guard looks straight ahead
+
+
+
     if args.calibrate:
         print("[cal] CALIBRATION MODE - motors are off.")
         print("[cal] put a cat-sized thing at a known distance behind the car,")
         print("[cal] check the number on the feed, adjust FOCAL_RATIO.")
-        time.sleep(1)      # give the link a sec to come up
         stop_car()         # just in case it was moving
 
     last_cmd = 0
     last_seen = 0
+    held_dist, held_x = None, None
+    last_save = 0
     wig = 0 # wiggle 
     session_start = time.time()
 
@@ -265,9 +282,16 @@ def main():
             time.sleep(0.1)
             continue
 
+        if args.record and time.time() - last_save > 2:
+            last_save = time.time()
+            import os
+            os.makedirs("cat_dataset", exist_ok=True)
+            cv2.imwrite(f"cat_dataset/{int(last_save)}.jpg", frame)
+ 
+
         # --- find the cat ---
-        res = model.predict(frame, classes=[15], conf=0.35, # class 15 = cat, class 16 = dogs. 
-                            imgsz=416, verbose=False)[0]    # included dogs as I don't have any dogs as COCO models have troubles differentiating
+        res = model.predict(frame, classes=CAT_CLASSES, conf=CONF,
+                            imgsz=DETECT_SIZE, verbose=False)[0]
         dist = None
         x_off = None
         if len(res.boxes) > 0:
@@ -282,6 +306,13 @@ def main():
             cv2.rectangle(frame, (x1,y1), (x2,y2), (0,255,0), 2)
             cv2.putText(frame, f"cat {dist:.2f}m", (x1, max(y1-8, 20)),
                         cv2.FONT_HERSHEY_SIMPLEX, 0.8, (0,255,0), 2)
+            held_dist, held_x = dist, x_off       # remember for flicker frames
+        elif time.time() - last_seen < HOLD_SEC:
+            # detector blinked (happens a lot with a moving cat) -- keep
+            # acting on where the cat just was instead of stopping dead
+            dist, x_off = held_dist, held_x
+            cv2.putText(frame, "(holding last fix)", (10, frame.shape[0]-15),
+                        cv2.FONT_HERSHEY_SIMPLEX, 0.6, (0,200,200), 2)
         STATE["dist"] = dist
 
         now = time.time()
@@ -294,7 +325,7 @@ def main():
             if now - session_start > PLAY_TIME + BREAK_TIME:
                 session_start = now      # break's over, back to playing
         elif dist is not None and dist < POUNCE_DIST:
-            decision = "Run! cat's close"
+            decision = "run! cat's close"
         elif dist is not None and dist < CHASE_DIST:
             decision = "fleeing, keep the chase going"
         elif dist is not None and dist < TEASE_DIST:
@@ -308,7 +339,7 @@ def main():
         # --- action (rate limited so we don't spam the esp32) ---
         if not args.calibrate and now - last_cmd > 0.15:
             last_cmd = now
-            if "SPRINT" in decision:
+            if "run" in decision:
                 drive(1, SPRINT_SPD)
             elif "fleeing" in decision:
                 # camera faces backward so left/right are mirrored
