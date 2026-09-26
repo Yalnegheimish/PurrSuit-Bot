@@ -6,11 +6,12 @@
 # lives in the Arduino sketch, the car handles it on its own).
 #
 # how to run:
-#   pip install ultralytics opencv-python flask numpy
+#   pip install -r requirements.txt
 #   connect the machine to the ELEGOO-XXXX wifi (no password)
-#   python cat_chaser.py                 <- play mode
-#   python cat_chaser.py --calibrate     <- motors OFF, for tuning distance
-#   python cat_chaser.py --ip 1.2.3.4    <- if robot isn't at 192.168.4.1
+#   python purrsuit.py                 <- play mode
+#   python purrsuit.py --calibrate     <- motors OFF, for tuning distance
+#   python purrsuit.py --ip 1.2.3.4    <- if robot isn't at 192.168.4.1
+#   python purrsuit.py --record        <- for recording fine-tuning dataset
 #
 # then open  http://localhost:3333  in a browser to see what the robot sees
 # and what it's deciding to do. 
@@ -56,12 +57,16 @@ SEARCH_SPIN_SEC  = 0.1   # how long each little spin step lasts
 SEARCH_LOOK_SEC  = 0.9    # how long we hold still and actually look
 
 MODEL_FILE  = "yolo11s.pt"   # select your model
-CONF        = 0.25           # lower = catches more cats, more false alarms
+CONF        = 0.25           # lower = catches more cats, more false alarms which can be enticing for a cat
 DETECT_SIZE = 640            # inference size. 416 was missing far-away cats
-CAT_CLASSES = [15, 16]       # 15=cat 16=dog. yes dog. coco models mix up
-                             # cats and dogs ALL the time.
+CAT_CLASSES = [15, 16]       # 15=cat 16=dog. coco models mix up cats and dogs.
 HOLD_SEC    = 1.0            # keep chasing on the last known position this
                              # long when detection flickers out for a frame
+
+
+ZIG_FWD_SEC  = 0.45   # forward leg of the zigzag
+ZIG_TURN_SEC = 0.18   # how long each zigzag lasts
+ZIG_TURN_SPD = 150    # zigzag turn speed
 
 
 PLAY_TIME  = 300      # seconds of play before a forced break
@@ -119,8 +124,10 @@ def drive(direction, speed):   # 1 fwd, 2 back, 3 spin left, 4 spin right from f
 def stop_car():
     send_cmd({"N": 102, "D1": 9, "D2": 0})   # 9 = stop+standby
 
-def wiggle_toy(angle):
+def set_servo(angle):
+    # we only ever center it; the toy wiggle is done by zigzagging the car
     send_cmd({"N": 5, "D1": 1, "D2": int(angle)})
+
 
 def link_babysitter(ip):
     """runs forever in a thread: answers heartbeats, reconnects if dropped"""
@@ -164,7 +171,7 @@ def open_camera(ip, forced_url=None):
                 print("[cam] streaming from", url)
                 return cap, None
         cap.release()
-    # plan B: grab single jpegs from /capture in a loop. slower but works
+    # plan B: grab single jpegs from /capture in a loop.
     cap_url = f"http://{ip}/capture"
     try:
         data = urllib.request.urlopen(cap_url, timeout=3).read()
@@ -242,7 +249,7 @@ def main():
     ap.add_argument("--stream", default=None, help="force a stream url")
     ap.add_argument("--record", action="store_true",
                     help="save a frame every 2s to cat_dataset/ so you can "
-                         "fine-tune yolo on your cats") 
+                         "fine-tune YOLO on your cats") 
 
     args = ap.parse_args()
 
@@ -259,7 +266,7 @@ def main():
     print("[web] feed page -> http://localhost:3333")
 
     time.sleep(1.5)    # give the tcp link a sec to come up
-    wiggle_toy(90)     # center ultrasonic sensor once so the crash guard looks straight ahead
+    set_servo(90)      # point the ultrasonic straight ahead and leave it there
 
 
 
@@ -272,8 +279,7 @@ def main():
     last_cmd = 0
     last_seen = 0
     held_dist, held_x = None, None
-    last_save = 0
-    wig = 0 # wiggle 
+    last_save = 0 
     session_start = time.time()
 
     while True:
@@ -308,8 +314,7 @@ def main():
                         cv2.FONT_HERSHEY_SIMPLEX, 0.8, (0,255,0), 2)
             held_dist, held_x = dist, x_off       # remember for flicker frames
         elif time.time() - last_seen < HOLD_SEC:
-            # detector blinked (happens a lot with a moving cat) -- keep
-            # acting on where the cat just was instead of stopping dead
+            # keep acting on where the cat just was instead of stopping dead
             dist, x_off = held_dist, held_x
             cv2.putText(frame, "(holding last fix)", (10, frame.shape[0]-15),
                         cv2.FONT_HERSHEY_SIMPLEX, 0.6, (0,200,200), 2)
@@ -321,7 +326,7 @@ def main():
         if args.calibrate:
             decision = "CALIBRATE (motors off)"
         elif now - session_start > PLAY_TIME:
-            decision = "break time, cats gotta rest"
+            decision = "break time"
             if now - session_start > PLAY_TIME + BREAK_TIME:
                 session_start = now      # break's over, back to playing
         elif dist is not None and dist < POUNCE_DIST:
@@ -336,7 +341,7 @@ def main():
             decision = "no cat, spinning to find one"
         STATE["decision"] = decision
 
-        # --- action (rate limited so we don't spam the esp32) ---
+        # --- action (rate limited) ---
         if not args.calibrate and now - last_cmd > 0.15:
             last_cmd = now
             if "run" in decision:
@@ -350,9 +355,17 @@ def main():
                 else:
                     drive(1, FLEE_SPD)
             elif "teasing" in decision:
-                drive(1, TEASE_SPD)
-                wig = (wig + 1) % 4
-                wiggle_toy(60 if wig < 2 else 120)
+                # zigzag: fwd -> jink left -> fwd -> jink right -> repeat.
+                cycle = 2 * (ZIG_FWD_SEC + ZIG_TURN_SEC)
+                phase = now % cycle
+                if phase < ZIG_FWD_SEC:
+                    drive(1, TEASE_SPD)
+                elif phase < ZIG_FWD_SEC + ZIG_TURN_SEC:
+                    drive(3, ZIG_TURN_SPD)
+                elif phase < 2*ZIG_FWD_SEC + ZIG_TURN_SEC:
+                    drive(1, TEASE_SPD)
+                else:
+                    drive(4, ZIG_TURN_SPD)
             elif "vanished" in decision or "break" in decision:
                 stop_car()
             else:
