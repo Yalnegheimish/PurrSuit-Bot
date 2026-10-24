@@ -22,6 +22,7 @@ import socket
 import threading
 import time
 import urllib.request
+from collections import deque
 
 import cv2
 import numpy as np
@@ -32,18 +33,18 @@ from ultralytics import YOLO
 ROBOT_IP   = "192.168.4.1"   # robot's AP address
 CTRL_PORT  = 100             # elegoo tcp command port
 STREAM_URLS = [              
-    "http://{ip}:81/stream",  # <- the real one (checked the esp32 source)
-    "http://{ip}/Test",       # also streams
+    "http://{ip}:81/stream",  
+    "http://{ip}/Test",       
 ]
 
 FOCAL_RATIO = 0.79  # focal length = this * frame width (65 deg lens)
                       # to calibrate: put something cat-sized exactly 1m
                       # behind the car, run --calibrate, scale this number
                       # until the feed reads 1.00
-CAT_HEIGHT  = 0.25    # meters, roughly a cat. bigger cat = bigger number
+CAT_HEIGHT  = 0.25    # cat standing height
 
 # distances in meters (cat -> rear camera)
-POUNCE_DIST = 0.45    # cat's basically on the toy -> RUN
+POUNCE_DIST = 0.45    # cat's basically on the toy -> run
 CHASE_DIST  = 1.10    # cat's chasing -> keep running
 TEASE_DIST  = 2.50    # cat's watching -> tempt it
 
@@ -51,15 +52,14 @@ SPRINT_SPD = 220
 FLEE_SPD   = 160
 TEASE_SPD  = 110
 
-# spin a little -> stop -> let the camera get 2-3 sharp frames -> repeat.
-SEARCH_SPIN_SPD  = 130    # tank turns need a bit of oomph or they stall (keep it above 110)
-SEARCH_SPIN_SEC  = 0.1   # how long each little spin step lasts
+SEARCH_SPIN_SPD  = 130    # search spin speed (keep it above 110)
+SEARCH_SPIN_SEC  = 0.2   # how long each little spin step lasts
 SEARCH_LOOK_SEC  = 0.9    # how long we hold still and actually look
 
-MODEL_FILE  = "yolo11s.pt"   # select your model
-CONF        = 0.25           # lower = catches more cats, more false alarms which can be enticing for a cat
-DETECT_SIZE = 640            # inference size. 416 was missing far-away cats
-CAT_CLASSES = [15, 16]       # 15=cat 16=dog. coco models mix up cats and dogs.
+MODEL_FILE  = "yolo11s.pt"   # CV model
+CONF        = 0.28           # confidence threshold
+DETECT_SIZE = 640            # inference size
+CAT_CLASSES = [15, 16]       # 15=cat 16=dog
 HOLD_SEC    = 1.0            # keep chasing on the last known position this
                              # long when detection flickers out for a frame
 
@@ -70,7 +70,7 @@ ZIG_TURN_SPD = 150    # zigzag turn speed
 
 
 PLAY_TIME  = 300      # seconds of play before a forced break
-BREAK_TIME = 60       # let the cat "win" and chill for a bit
+BREAK_TIME = 60       # let the cat "win" 
 
 # ----------------- shared state for the feed -----------------
 STATE = {
@@ -82,6 +82,17 @@ STATE = {
 }
 latest_jpg = None         # last annotated frame as jpeg bytes
 frame_lock = threading.Lock()
+
+# rolling event log for the web pag
+LOG = deque(maxlen=150)
+
+def log_event(action, dist=None, conf=None):
+    LOG.append({
+        "t": time.strftime("%H:%M:%S"),
+        "action": action,
+        "dist": None if dist is None else round(float(dist), 2),
+        "conf": None if conf is None else round(float(conf), 2),
+    })
 
 # ----------------- robot tcp link -----------------
 # the esp32 sends {Heartbeat} every second and DROPS US if we don't send
@@ -96,6 +107,7 @@ def sock_connect(ip):
         s.settimeout(0.25)
         sock = s
         STATE["linked"] = True
+        log_event("link up")
         print("[link] connected!")
     except OSError as e:
         sock = None
@@ -125,7 +137,7 @@ def stop_car():
     send_cmd({"N": 102, "D1": 9, "D2": 0})   # 9 = stop+standby
 
 def set_servo(angle):
-    # we only ever center it; the toy wiggle is done by zigzagging the car
+    # center servo
     send_cmd({"N": 5, "D1": 1, "D2": int(angle)})
 
 
@@ -140,7 +152,7 @@ def link_babysitter(ip):
             continue
         try:
             data = sock.recv(256)
-            if not data:            # esp32 hung up on us
+            if not data:            # esp32 hung up 
                 sock = None
                 STATE["linked"] = False
                 continue
@@ -149,9 +161,10 @@ def link_babysitter(ip):
                 part, _, buf = buf.partition(b"}")
                 msg = part.decode(errors="ignore").lstrip("{").strip()
                 if msg == "Heartbeat":
-                    send_raw("{Heartbeat}")     # the magic keep-alive
+                    send_raw("{Heartbeat}")     
                 elif msg == "_evade_1":
                     STATE["evades"] += 1
+                    log_event("ULTRASONIC EVADE (car dodged on its own)")
                     print("[car] dodged an obstacle on its own")
                 # everything else ({ok} etc) we just ignore
         except socket.timeout:
@@ -193,7 +206,7 @@ def grab_frame(cap, cap_url):
     except Exception:
         return False, None
 
-# ----------------- the web debug page -----------------
+# ----------------- the web page -----------------
 app = Flask(__name__)
 
 PAGE = """
@@ -203,10 +216,15 @@ PAGE = """
  img  { max-width:95%; border:2px solid #444; margin-top:10px }
  #d   { font-size:1.4em; margin:10px }
  .cal { color:#ffb347 }
+ #log { max-width:820px; height:185px; margin:12px auto; padding:8px;
+        background:#111; border:1px solid #444; border-radius:4px;
+        overflow-y:auto; text-align:left; white-space:pre; font-size:0.85em;
+        color:#9ecb9e }
 </style></head><body>
 <h2>Live Purrsuit feed</h2>
 <div id="d">...</div>
 <img src="/video">
+<div id="log">waiting for events...</div>
 <script>
  setInterval(async () => {
    let s = await (await fetch('/status')).json();
@@ -215,6 +233,15 @@ PAGE = """
    let el = document.getElementById('d');
    el.textContent = t;
    el.className = (s.mode == 'calibrate') ? 'cal' : '';
+
+   // behaviour log, newest line on top so you don't have to chase the scroll
+   let lines = s.log.slice().reverse().map(e => {
+     let x = '[' + e.t + '] ' + e.action;
+     if (e.dist != null) x += '  |  dist ' + e.dist.toFixed(2) + ' m';
+     if (e.conf != null) x += '  |  conf ' + e.conf.toFixed(2);
+     return x;
+   });
+   document.getElementById('log').textContent = lines.join('\\n');
  }, 400);
 </script></body></html>
 """
@@ -225,7 +252,8 @@ def index():
 
 @app.route("/status")
 def status():
-    return STATE
+    # deque to list
+    return {**STATE, "log": list(LOG)}
 
 @app.route("/video")
 def video():
@@ -235,7 +263,7 @@ def video():
                 jpg = latest_jpg
             if jpg is not None:
                 yield (b"--frame\r\nContent-Type: image/jpeg\r\n\r\n" + jpg + b"\r\n")
-            time.sleep(0.05)   # ~20fps, plenty for debugging
+            time.sleep(0.05)   # ~20fps
     return Response(gen(), mimetype="multipart/x-mixed-replace; boundary=frame")
 
 # ----------------- main -----------------
@@ -300,23 +328,26 @@ def main():
                             imgsz=DETECT_SIZE, verbose=False)[0]
         dist = None
         x_off = None
+        conf = None
         if len(res.boxes) > 0:
             boxes = res.boxes.xyxy.cpu().numpy()
+            confs = res.boxes.conf.cpu().numpy()
             # biggest box = closest cat (matters when both cats show up)
-            b = boxes[np.argmax((boxes[:,2]-boxes[:,0]) * (boxes[:,3]-boxes[:,1]))]
-            x1, y1, x2, y2 = b.astype(int)
+            i = int(np.argmax((boxes[:,2]-boxes[:,0]) * (boxes[:,3]-boxes[:,1])))
+            x1, y1, x2, y2 = boxes[i].astype(int)
+            conf = float(confs[i])
             f_px = FOCAL_RATIO * frame.shape[1]
             dist = f_px * CAT_HEIGHT / max(y2 - y1, 1)
             x_off = ((x1+x2)/2 - frame.shape[1]/2) / (frame.shape[1]/2)  # -1..1
             last_seen = time.time()
             cv2.rectangle(frame, (x1,y1), (x2,y2), (0,255,0), 2)
-            cv2.putText(frame, f"cat {dist:.2f}m", (x1, max(y1-8, 20)),
+            cv2.putText(frame, f"cat {dist:.2f}m ({conf:.2f})", (x1, max(y1-8, 20)),
                         cv2.FONT_HERSHEY_SIMPLEX, 0.8, (0,255,0), 2)
             held_dist, held_x = dist, x_off       # remember for flicker frames
         elif time.time() - last_seen < HOLD_SEC:
             # keep acting on where the cat just was instead of stopping dead
             dist, x_off = held_dist, held_x
-            cv2.putText(frame, "(holding last fix)", (10, frame.shape[0]-15),
+            cv2.putText(frame, "(holding last action)", (10, frame.shape[0]-15),
                         cv2.FONT_HERSHEY_SIMPLEX, 0.6, (0,200,200), 2)
         STATE["dist"] = dist
 
@@ -339,6 +370,10 @@ def main():
             decision = "cat disappeared, waiting"
         else:
             decision = "no cat, spinning to find one"
+
+        # action log
+        if decision != STATE["decision"]:
+            log_event(decision, dist, conf)
         STATE["decision"] = decision
 
         # --- action (rate limited) ---
@@ -366,18 +401,17 @@ def main():
                     drive(1, TEASE_SPD)
                 else:
                     drive(4, ZIG_TURN_SPD)
-            elif "vanished" in decision or "break" in decision:
+            elif "disappeared" in decision or "break" in decision:
                 stop_car()
             else:
                 # searching: spin a small step, then hold still and LOOK.
-                # spinning nonstop = motion blur = yolo never sees the cat
                 phase = now % (SEARCH_SPIN_SEC + SEARCH_LOOK_SEC)
                 if phase < SEARCH_SPIN_SEC:
                     drive(3, SEARCH_SPIN_SPD)
                 else:
                     stop_car()
 
-        # --- stamp the decision on the frame for the feed ---
+        # --- stamp the decision and distance on the frame for the feed ---
         cv2.putText(frame, decision, (10, 30),
                     cv2.FONT_HERSHEY_SIMPLEX, 0.9, (50, 200, 255), 2)
         if args.calibrate and dist is not None:
