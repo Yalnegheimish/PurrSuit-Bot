@@ -181,8 +181,8 @@ cython_debug/
 .cursorindexingignore
 
 # --- purrsuit specifics ---
-*.pt              # yolo weights, auto-downloaded on first run
-cat_dataset/      # --record frames
+*.pt             
+cat_dataset/     
 .vscode/
 Thumbs.db
 desktop.ini
