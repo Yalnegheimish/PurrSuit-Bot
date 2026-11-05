@@ -164,7 +164,7 @@ def link_babysitter(ip):
                     send_raw("{Heartbeat}")     
                 elif msg == "_evade_1":
                     STATE["evades"] += 1
-                    log_event("ULTRASONIC EVADE (car dodged on its own)")
+                    log_event("Ultrasonic sensor evasion")
                     print("[car] dodged an obstacle on its own")
                 # everything else ({ok} etc) we just ignore
         except socket.timeout:
@@ -234,7 +234,7 @@ PAGE = """
    el.textContent = t;
    el.className = (s.mode == 'calibrate') ? 'cal' : '';
 
-   // behaviour log, newest line on top so you don't have to chase the scroll
+   // behaviour log, newest line on top
    let lines = s.log.slice().reverse().map(e => {
      let x = '[' + e.t + '] ' + e.action;
      if (e.dist != null) x += '  |  dist ' + e.dist.toFixed(2) + ' m';
