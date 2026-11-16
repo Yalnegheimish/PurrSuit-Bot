@@ -1,11 +1,4 @@
-#!/usr/bin/env python3
-#
-# camera is on the BACK of the car looking at the cat, toy drags behind on
-# the wand. when the cat gets close the car runs away so the cat chases the
-# toy. front ultrasonic stops it from faceplanting into furniture ideally (that bit
-# lives in the Arduino sketch, the car handles it on its own).
-#
-# how to run:
+# How to run:
 #   pip install -r requirements.txt
 #   connect the machine to the ELEGOO-XXXX wifi (no password)
 #   python purrsuit.py                 <- play mode
@@ -57,7 +50,7 @@ SEARCH_SPIN_SEC  = 0.2   # how long each little spin step lasts
 SEARCH_LOOK_SEC  = 0.9    # how long we hold still and actually look
 
 MODEL_FILE  = "yolo11s.pt"   # CV model
-CONF        = 0.28           # confidence threshold
+CONF        = 0.4           # confidence threshold
 DETECT_SIZE = 640            # inference size
 CAT_CLASSES = [15, 16]       # 15=cat 16=dog
 HOLD_SEC    = 1.0            # keep chasing on the last known position this
