@@ -51,13 +51,14 @@ The robot car's ESP32 camera is mounted on the back of the car watching the cat,
 ## Setup
 
 ### 1. Hardware
-
-1. Assemble the car per the ELEGOO manual except for the camera.
-2. Print the two mounts and install the camera bracket at the rear of the top plate (camera facing backward) and the wand holder at the rear of the bottom plate. Holes will need to be drilled as per the below photo.
+1. Print the two mounts and install the camera bracket at the rear of the top plate (camera facing backward) and the wand holder at the rear of the bottom plate. Holes will need to be drilled as per the below photo.
 
 <img width="1731" height="856" alt="bottom plate holes" src="https://github.com/user-attachments/assets/45694865-0f8d-41fb-92df-293ca194b504" />
 <img width="1852" height="993" alt="top plate holes" src="https://github.com/user-attachments/assets/64896f16-c5bd-40e2-8ef8-152dd34a532b" />
 
+
+
+2. Assemble the rest of the car per the ELEGOO manual.
 
 3. Attach a wand to the holder and use a zip tie to secure the toy to it.
 
