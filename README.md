@@ -33,7 +33,7 @@ The robot car's ESP32 camera is mounted on the back of the car watching the cat,
 
 ### Feed POV:
 
-![Test](https://github.com/user-attachments/assets/61798331-16dd-45e7-a4d8-95e820eca12e)
+<img width="380" alt="Feed POV" src="https://github.com/user-attachments/assets/61798331-16dd-45e7-a4d8-95e820eca12e" />
 
 ## Repo layout
 
