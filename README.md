@@ -1,4 +1,6 @@
-<img width="810" height="308" alt="robot car_v3" src="https://github.com/user-attachments/assets/2fd55cfa-1224-4232-86a1-5cf4d11264c8" />
+<p align="center">
+<img width="380" alt="robot car_v3" src="https://github.com/user-attachments/assets/2fd55cfa-1224-4232-86a1-5cf4d11264c8" />
+</p>
 <h1 align="center">Purrsuit</h1>
 An autonomous robot car to play chase with cats. Uses YOLO detection and monocular
 distance estimation keep the wand toy just out of the paw's reach.
@@ -23,8 +25,16 @@ The robot car's ESP32 camera is mounted on the back of the car watching the cat,
   
 - *Obstacle avoidance*: Uses stock ultrasonic sensor in the front to stop and evade obstacles on its own.
  
-## Demo video
- 
+## Demo
+
+### My POV:
+
+ https://github.com/user-attachments/assets/87c3a832-b32c-4536-9426-879c833890fd
+
+### Feed POV:
+
+![Test](https://github.com/user-attachments/assets/61798331-16dd-45e7-a4d8-95e820eca12e)
+
 ## Repo layout
 
 | Path | Description |
@@ -35,7 +45,7 @@ The robot car's ESP32 camera is mounted on the back of the car watching the cat,
 | `stl/purrsuit_wand_holder.obj` | 3D-printable wand toy holder |
 | `requirements.txt` | Python dependencies |
 
-## BOM
+## Bill of Materials (BOM)
 
 | Part | Qty | Notes |
 |---|---|---|
@@ -52,19 +62,19 @@ The robot car's ESP32 camera is mounted on the back of the car watching the cat,
 
 ### 1. Hardware
 1. Print the two mounts and install the camera bracket at the rear of the top plate (camera facing backward) and the wand holder at the rear of the bottom plate. Holes will need to be drilled as per the below photo.
-
-<img width="1731" height="856" alt="bottom plate holes" src="https://github.com/user-attachments/assets/45694865-0f8d-41fb-92df-293ca194b504" />
-<img width="1852" height="993" alt="top plate holes" src="https://github.com/user-attachments/assets/64896f16-c5bd-40e2-8ef8-152dd34a532b" />
-
+<p align="center">
+<img width="380" alt="bottom plate holes" src="https://github.com/user-attachments/assets/45694865-0f8d-41fb-92df-293ca194b504" />
+<img width="380" alt="top plate holes" src="https://github.com/user-attachments/assets/64896f16-c5bd-40e2-8ef8-152dd34a532b" />
+</p>
 
 
 2. Assemble the rest of the car per the ELEGOO manual.
 
 3. Attach a wand to the holder and use a zip tie to secure the toy to it.
+<p align="center">
+<img width="380" alt="image" src="https://github.com/user-attachments/assets/eff36a2e-4946-4ec5-8c40-e637d102105e" />
+</p>
 
-<img width="2560" height="1920" alt="image" src="https://github.com/user-attachments/assets/eff36a2e-4946-4ec5-8c40-e637d102105e" />
-
- 
 ### 2. Firmware
 
 - *Arduino UNO*: open `purrsuit_uno_firmware/` in the Arduino IDE, install the "ArduinoJson" library, slide the car's mode switch to upload, flash the firmware, then slide it back.
@@ -138,8 +148,7 @@ behavior.
 1. Run with `--calibrate` (motors stay off in this mode).
 2. Place a cat-sized object (~25 cm tall) exactly 1 m behind the car.
 3. Adjust `FOCAL_RATIO` in `purrsuit.py` until the dashboard reads 1.00 m.
-4. If your cats are bigger or smaller than 25 cm at the shoulder,
-   adjust `CAT_HEIGHT` too.
+4. If your cats are bigger or smaller than 25 cm at the shoulder, adjust `CAT_HEIGHT` too.
  
 ## Future improvements
 
